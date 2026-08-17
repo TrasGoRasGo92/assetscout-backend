@@ -1,10 +1,19 @@
 // api/generate.js
 // Recibe un fileToken (del paso anterior, upload.js) y crea la tarea
 // de generación 3D en Tripo3D. Devuelve un taskId para hacer seguimiento.
+// Incluye un límite diario global (protección de gasto) usando CountAPI,
+// un contador público gratuito que no requiere cuenta ni configuración.
 
 export const config = {
   maxDuration: 60,
 };
+
+const DAILY_LIMIT = 15; // máximo de generaciones 3D permitidas al día (ajustable)
+
+function todayKey() {
+  const d = new Date();
+  return `assetscout-gen-${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -27,6 +36,23 @@ export default async function handler(req, res) {
     const apiKey = process.env.TRIPO_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'TRIPO_API_KEY no configurada en Vercel' });
+    }
+
+    // Comprobamos y aumentamos el contador diario ANTES de gastar créditos
+    const key = todayKey();
+    let count = 0;
+    try {
+      const counterRes = await fetch(`https://api.countapi.xyz/hit/assetscout-limits/${key}`);
+      const counterData = await counterRes.json();
+      count = counterData.value || 0;
+    } catch (counterErr) {
+      console.error('No se pudo consultar el contador, se permite la petición por seguridad', counterErr);
+    }
+
+    if (count > DAILY_LIMIT) {
+      return res.status(429).json({
+        error: `Límite diario de generaciones 3D alcanzado (${DAILY_LIMIT}/día). Vuelve a intentarlo mañana.`,
+      });
     }
 
     const taskRes = await fetch('https://api.tripo3d.ai/v2/openapi/task', {
