@@ -1,3 +1,11 @@
+// api/generate.js
+// Recibe un fileToken (del paso anterior, upload.js) y crea la tarea
+// de generación 3D en Tripo3D. Devuelve un taskId para hacer seguimiento.
+
+export const config = {
+  maxDuration: 60,
+};
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -33,6 +41,9 @@ export default async function handler(req, res) {
           type: fileType || 'jpg',
           file_token: fileToken,
         },
+        texture: true,
+        pbr: true,
+        generate_parts: true,
       }),
     });
 
