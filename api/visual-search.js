@@ -105,20 +105,26 @@ export default async function handler(req, res) {
     const webDetection = visionData.responses?.[0]?.webDetection || {};
     const pages = webDetection.pagesWithMatchingImages || [];
 
-    const results = pages.map((page) => ({
+    // Convertimos las páginas encontradas en resultados, marcando cuáles
+    // son de portales de modelos 3D conocidos (más útiles) frente a genéricos.
+    const allResults = pages.map((page) => ({
       title: page.pageTitle || page.url,
       url: page.url,
       thumb: page.partialMatchingImages?.[0]?.url || page.fullMatchingImages?.[0]?.url || null,
       is3DSource: isKnown3DDomain(page.url),
     }));
 
-    results.sort((a, b) => (b.is3DSource ? 1 : 0) - (a.is3DSource ? 1 : 0));
+    // Nos quedamos SOLO con resultados de portales de modelos 3D conocidos —
+    // descartamos Pinterest, Instagram, tiendas, blogs, etc. que no sirven
+    // para encontrar un archivo 3D descargable.
+    const results = allResults.filter((r) => r.is3DSource);
 
     const bestGuess = webDetection.bestGuessLabels?.[0]?.label || null;
 
     return res.status(200).json({
       results: results.slice(0, 12),
       bestGuessLabel: bestGuess,
+      totalFoundBeforeFilter: allResults.length,
     });
   } catch (err) {
     console.error(err);
