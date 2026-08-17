@@ -1,0 +1,6 @@
+{
+  "name": "assetscout-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend mínimo de AssetScout: guarda la API key de Tripo3D en secreto y hace de intermediario."
+}
