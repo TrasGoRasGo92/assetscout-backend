@@ -2,7 +2,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   try {
-    const { url } = req.query;
+    const { url, filename } = req.query;
     if (!url) {
       return res.status(400).json({ error: 'Falta url' });
     }
@@ -13,7 +13,8 @@ export default async function handler(req, res) {
     }
 
     const buffer = await modelRes.arrayBuffer();
-    res.setHeader('Content-Type', 'model/gltf-binary');
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename || 'modelo.glb'}"`);
     return res.status(200).send(Buffer.from(buffer));
   } catch (err) {
     console.error(err);
