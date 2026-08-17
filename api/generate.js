@@ -38,7 +38,6 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'TRIPO_API_KEY no configurada en Vercel' });
     }
 
-    // Comprobamos y aumentamos el contador diario ANTES de gastar créditos
     const key = todayKey();
     let count = 0;
     try {
