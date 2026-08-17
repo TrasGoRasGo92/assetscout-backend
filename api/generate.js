@@ -1,9 +1,15 @@
 // api/generate.js
 // Recibe un fileToken (del paso anterior, upload.js) y crea la tarea
 // de generación 3D en Tripo3D. Devuelve un taskId para hacer seguimiento.
+//
+// Soporta dos modos:
+//  - Una sola foto: { fileToken, fileType } → genera con "image_to_model" (como antes)
+//  - Varias fotos (2-4): { files: [{fileToken, fileType}, ...] } → genera con
+//    "multiview_to_model", que da mejor geometría/detalle al combinar ángulos
+//    (orden esperado por Tripo3D: [frontal, lateral, trasera, otro lateral])
+//
 // Incluye un límite diario global (protección de gasto) usando CountAPI,
 // un contador público gratuito que no requiere cuenta ni configuración.
-
 export const config = {
   maxDuration: 60,
 };
@@ -28,9 +34,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { fileToken, fileType } = req.body;
-    if (!fileToken) {
-      return res.status(400).json({ error: 'Falta fileToken' });
+    const { fileToken, fileType, files } = req.body;
+
+    // Modo multivista: llega un array "files" con 2-4 fotos ya subidas
+    const isMultiview = Array.isArray(files) && files.length > 1;
+
+    if (!isMultiview && !fileToken) {
+      return res.status(400).json({ error: 'Falta fileToken (o un array "files" con varias fotos)' });
+    }
+    if (isMultiview && files.length > 4) {
+      return res.status(400).json({ error: 'Como máximo se admiten 4 fotos por modelo' });
     }
 
     const apiKey = process.env.TRIPO_API_KEY;
@@ -54,13 +67,24 @@ export default async function handler(req, res) {
       });
     }
 
-    const taskRes = await fetch('https://api.tripo3d.ai/v2/openapi/task', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
+    let body;
+    if (isMultiview) {
+      // Tripo3D exige EXACTAMENTE 4 posiciones en el array, en el orden
+      // [frontal, lateral, trasera, otro lateral]. La frontal es obligatoria;
+      // las que falten se rellenan con un objeto vacío {}.
+      const slots = [null, null, null, null];
+      files.slice(0, 4).forEach((f, i) => { slots[i] = f; });
+
+      body = {
+        type: 'multiview_to_model',
+        files: slots.map((f) =>
+          f ? { type: f.fileType || 'jpg', file_token: f.fileToken } : {}
+        ),
+        texture: true,
+        pbr: true,
+      };
+    } else {
+      body = {
         type: 'image_to_model',
         file: {
           type: fileType || 'jpg',
@@ -68,11 +92,18 @@ export default async function handler(req, res) {
         },
         texture: true,
         pbr: true,
-      }),
+      };
+    }
+
+    const taskRes = await fetch('https://api.tripo3d.ai/v2/openapi/task', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
     });
-
     const taskData = await taskRes.json();
-
     if (!taskRes.ok || taskData.code !== 0) {
       return res.status(502).json({ error: 'Error creando la tarea en Tripo3D', detail: taskData });
     }
