@@ -43,7 +43,6 @@ export default async function handler(req, res) {
         },
         texture: true,
         pbr: true,
-        generate_parts: true,
       }),
     });
 
@@ -52,10 +51,3 @@ export default async function handler(req, res) {
     if (!taskRes.ok || taskData.code !== 0) {
       return res.status(502).json({ error: 'Error creando la tarea en Tripo3D', detail: taskData });
     }
-
-    return res.status(200).json({ taskId: taskData.data.task_id });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Error interno', detail: String(err) });
-  }
-}
