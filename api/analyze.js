@@ -1,3 +1,7 @@
+// api/analyze.js
+// Recibe la imagen en base64 y usa la API de Anthropic (con tu propia clave,
+// guardada en secreto en Vercel) para extraer tipo, estilo, material, etc.
+
 export const config = {
   api: {
     bodyParser: {
@@ -46,7 +50,7 @@ export default async function handler(req, res) {
             { type: 'image', source: { type: 'base64', media_type: mimeType || 'image/jpeg', data: imageBase64 } },
             {
               type: 'text',
-              text: "Analiza esta imagen de un mueble o pieza de carpintería/mobiliario. Devuelve SOLO un JSON (sin texto adicional, sin markdown) con esta forma exacta: {\"tipo\":\"...\",\"estilo\":\"...\",\"material\":\"...\",\"color\":\"...\",\"dimensiones_estimadas\":\"...\"}. Si algo no es determinable, pon 'no determinado'.",
+              text: "Analiza esta imagen de un mueble o pieza de carpintería/mobiliario. Devuelve SOLO un JSON (sin texto adicional, sin markdown) con esta forma exacta: {\"tipo\":\"...\",\"estilo\":\"...\",\"material\":\"...\",\"color\":\"...\",\"dimensiones_estimadas\":\"...\",\"tipo_en\":\"...\",\"estilo_en\":\"...\"}. Los campos sin '_en' van en español, para mostrar al usuario. Los campos 'tipo_en' y 'estilo_en' son la traducción simple al inglés de 'tipo' y 'estilo' (1-3 palabras cada uno, términos comunes de catálogos de mobiliario en inglés, ej. 'sofa', 'daybed', 'armchair', 'mid-century modern'), para poder buscar en catálogos internacionales de modelos 3D. Si algo no es determinable, pon 'no determinado' (o 'unknown' en los campos '_en').",
             },
           ],
         }],
