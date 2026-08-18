@@ -21,10 +21,17 @@ const DAILY_LIMIT = 40; // más generoso que generate.js: la búsqueda visual es
 // Dominios conocidos de modelos/catálogos 3D — los resultados de estos dominios
 // se marcan como prioritarios frente a resultados genéricos de cualquier web.
 const KNOWN_3D_DOMAINS = [
+  // Catálogos y marketplaces genéricos de modelos 3D
   'sketchfab.com', 'cgtrader.com', 'turbosquid.com', 'polyhaven.com',
   'free3d.com', '3dexport.com', 'cults3d.com', 'renderhub.com',
   'blendswap.com', 'artstation.com', 'thingiverse.com', 'fab.com',
   'archive3d.net', 'grabcad.com', 'clara.io', '3dsky.org',
+  // Portales especializados en mobiliario/arquitectura con modelos 3D descargables
+  'archiproducts.com', 'architonic.com', 'bimobject.com',
+  '3dwarehouse.sketchup.com',
+  // Fabricantes de mobiliario con modelos 3D/BIM propios en su web
+  'ikea.com', 'andreuworld.com', 'kavehome.com', 'hay.com',
+  'muuto.com', 'normann-copenhagen.com', 'vitra.com',
 ];
 
 function isKnown3DDomain(url) {
