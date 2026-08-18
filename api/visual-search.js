@@ -2,7 +2,10 @@
 // Búsqueda inversa por imagen (como Google Lens) usando Google Cloud Vision API.
 // Recibe la foto y encuentra páginas web con imágenes visualmente similares.
 // Filtra los resultados para priorizar portales de modelos 3D conocidos.
-// Incluye límite diario global (protección de gasto), igual que en generate.js.
+//
+// Control de gasto: exige que el usuario haya iniciado sesión (Supabase) y
+// comprueba/descuenta su límite diario de búsquedas visuales en la base de
+// datos, en vez de un límite global compartido por todo el sitio.
 
 export const config = {
   api: {
@@ -14,11 +17,6 @@ export const config = {
 };
 
 const DAILY_LIMIT = 40; // más generoso que generate.js: la búsqueda visual es mucho más barata (~$0.0035 vs ~$0.20-0.30)
-
-function todayKey() {
-  const d = new Date();
-  return `assetscout-visual-${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
-}
 
 // Dominios conocidos de modelos/catálogos 3D — los resultados de estos dominios
 // se marcan como prioritarios frente a resultados genéricos de cualquier web.
@@ -38,10 +36,46 @@ function isKnown3DDomain(url) {
   }
 }
 
+async function checkUsage(req) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return { ok: false, status: 401, error: 'Debes iniciar sesión para usar la búsqueda visual.' };
+  }
+
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return { ok: false, status: 500, error: 'Supabase no configurado en el servidor (SUPABASE_URL / SUPABASE_ANON_KEY)' };
+  }
+
+  const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_usage`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ p_column: 'visual_searches', p_limit: DAILY_LIMIT }),
+  });
+
+  if (!rpcRes.ok) {
+    const errData = await rpcRes.json().catch(() => ({}));
+    const msg = errData.message || errData.error_description || '';
+    if (msg.includes('DAILY_LIMIT_EXCEEDED')) {
+      return { ok: false, status: 429, error: `Límite diario de búsquedas visuales alcanzado (${DAILY_LIMIT}/día). Vuelve a intentarlo mañana.` };
+    }
+    return { ok: false, status: 401, error: 'Sesión no válida. Vuelve a iniciar sesión.' };
+  }
+
+  return { ok: true };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -63,21 +97,11 @@ export default async function handler(req, res) {
       });
     }
 
-    // Comprobamos y aumentamos el contador diario ANTES de gastar créditos
-    const key = todayKey();
-    let count = 0;
-    try {
-      const counterRes = await fetch(`https://api.countapi.xyz/hit/assetscout-limits/${key}`);
-      const counterData = await counterRes.json();
-      count = counterData.value || 0;
-    } catch (counterErr) {
-      console.error('No se pudo consultar el contador, se permite la petición por seguridad', counterErr);
-    }
-
-    if (count > DAILY_LIMIT) {
-      return res.status(429).json({
-        error: `Límite diario de búsquedas visuales alcanzado (${DAILY_LIMIT}/día). Vuelve a intentarlo mañana.`,
-      });
+    // Control de gasto por usuario (requiere sesión iniciada) — se comprueba
+    // ANTES de gastar créditos de Google Vision.
+    const usage = await checkUsage(req);
+    if (!usage.ok) {
+      return res.status(usage.status).json({ error: usage.error });
     }
 
     const visionRes = await fetch(
@@ -105,8 +129,6 @@ export default async function handler(req, res) {
     const webDetection = visionData.responses?.[0]?.webDetection || {};
     const pages = webDetection.pagesWithMatchingImages || [];
 
-    // Convertimos las páginas encontradas en resultados, marcando cuáles
-    // son de portales de modelos 3D conocidos (más útiles) frente a genéricos.
     const allResults = pages.map((page) => ({
       title: page.pageTitle || page.url,
       url: page.url,
@@ -114,9 +136,6 @@ export default async function handler(req, res) {
       is3DSource: isKnown3DDomain(page.url),
     }));
 
-    // Nos quedamos SOLO con resultados de portales de modelos 3D conocidos —
-    // descartamos Pinterest, Instagram, tiendas, blogs, etc. que no sirven
-    // para encontrar un archivo 3D descargable.
     const results = allResults.filter((r) => r.is3DSource);
 
     const bestGuess = webDetection.bestGuessLabels?.[0]?.label || null;
