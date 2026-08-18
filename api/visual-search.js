@@ -16,7 +16,74 @@ export const config = {
   maxDuration: 30,
 };
 
-const DAILY_LIMIT = 40; // más generoso que generate.js: la búsqueda visual es mucho más barata (~$0.0035 vs ~$0.20-0.30)
+const LIMITS_BY_PLAN = { free: 5, pro: 40, estudio: 999 }; // "estudio" = prácticamente sin límite
+
+async function resolvePlan(SUPABASE_URL, SERVICE_KEY, userId, email) {
+  if (email) {
+    const grantRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/plan_grants?email=eq.${encodeURIComponent(email.toLowerCase())}&select=plan`,
+      { headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY } }
+    );
+    const grantRows = await grantRes.json();
+    if (grantRes.ok && grantRows.length) return grantRows[0].plan;
+  }
+  const subRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/subscriptions?user_id=eq.${userId}&select=plan,status`,
+    { headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY } }
+  );
+  const subRows = await subRes.json();
+  if (subRes.ok && subRows.length && ['active', 'trialing'].includes(subRows[0].status)) {
+    return subRows[0].plan;
+  }
+  return 'free';
+}
+
+async function checkUsage(req) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return { ok: false, status: 401, error: 'Debes iniciar sesión para usar la búsqueda visual.' };
+  }
+
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+  const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SERVICE_KEY) {
+    return { ok: false, status: 500, error: 'Supabase no configurado del todo en el servidor' };
+  }
+
+  const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY },
+  });
+  if (!userRes.ok) {
+    return { ok: false, status: 401, error: 'Sesión no válida. Vuelve a iniciar sesión.' };
+  }
+  const userData = await userRes.json();
+  const plan = await resolvePlan(SUPABASE_URL, SERVICE_KEY, userData.id, userData.email);
+  const dailyLimit = LIMITS_BY_PLAN[plan] ?? LIMITS_BY_PLAN.free;
+
+  const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_usage`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ p_column: 'visual_searches', p_limit: dailyLimit }),
+  });
+
+  if (!rpcRes.ok) {
+    const errData = await rpcRes.json().catch(() => ({}));
+    const msg = errData.message || errData.error_description || '';
+    if (msg.includes('DAILY_LIMIT_EXCEEDED')) {
+      return { ok: false, status: 429, error: `Límite diario de búsquedas visuales alcanzado (${dailyLimit}/día en tu plan ${plan}). Vuelve a intentarlo mañana o mejora de plan.` };
+    }
+    return { ok: false, status: 401, error: 'Sesión no válida. Vuelve a iniciar sesión.' };
+  }
+
+  return { ok: true };
+}
 
 // Dominios conocidos de modelos/catálogos 3D — los resultados de estos dominios
 // se marcan como prioritarios frente a resultados genéricos de cualquier web.
@@ -41,42 +108,6 @@ function isKnown3DDomain(url) {
   } catch {
     return false;
   }
-}
-
-async function checkUsage(req) {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-  if (!token) {
-    return { ok: false, status: 401, error: 'Debes iniciar sesión para usar la búsqueda visual.' };
-  }
-
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return { ok: false, status: 500, error: 'Supabase no configurado en el servidor (SUPABASE_URL / SUPABASE_ANON_KEY)' };
-  }
-
-  const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_usage`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({ p_column: 'visual_searches', p_limit: DAILY_LIMIT }),
-  });
-
-  if (!rpcRes.ok) {
-    const errData = await rpcRes.json().catch(() => ({}));
-    const msg = errData.message || errData.error_description || '';
-    if (msg.includes('DAILY_LIMIT_EXCEEDED')) {
-      return { ok: false, status: 429, error: `Límite diario de búsquedas visuales alcanzado (${DAILY_LIMIT}/día). Vuelve a intentarlo mañana.` };
-    }
-    return { ok: false, status: 401, error: 'Sesión no válida. Vuelve a iniciar sesión.' };
-  }
-
-  return { ok: true };
 }
 
 export default async function handler(req, res) {
