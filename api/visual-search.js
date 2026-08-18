@@ -134,9 +134,21 @@ export default async function handler(req, res) {
       url: page.url,
       thumb: page.partialMatchingImages?.[0]?.url || page.fullMatchingImages?.[0]?.url || null,
       is3DSource: isKnown3DDomain(page.url),
+      // "Coincidencia fuerte" = Google encontró esta MISMA imagen (o casi
+      // idéntica) en esa página. "Débil" = solo una imagen parecida en
+      // general, que casi nunca es útil para encontrar el modelo 3D real.
+      isStrongMatch: (page.fullMatchingImages || []).length > 0,
     }));
 
-    const results = allResults.filter((r) => r.is3DSource);
+    const known3DResults = allResults.filter((r) => r.is3DSource);
+    const strongResults = known3DResults.filter((r) => r.isStrongMatch);
+
+    // Si hay coincidencias fuertes, mostramos solo esas (son las fiables de verdad).
+    // Si NO hay ninguna, no mostramos las débiles como si fueran válidas —
+    // mejor decir claramente que no se ha encontrado nada fiable, que es lo
+    // más habitual con piezas únicas o artesanales que no están en internet.
+    const results = strongResults.length > 0 ? strongResults : [];
+    const hasOnlyWeakMatches = strongResults.length === 0 && known3DResults.length > 0;
 
     const bestGuess = webDetection.bestGuessLabels?.[0]?.label || null;
 
@@ -144,6 +156,7 @@ export default async function handler(req, res) {
       results: results.slice(0, 12),
       bestGuessLabel: bestGuess,
       totalFoundBeforeFilter: allResults.length,
+      hasOnlyWeakMatches,
     });
   } catch (err) {
     console.error(err);
