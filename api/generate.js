@@ -8,23 +8,57 @@
 //    "multiview_to_model", que da mejor geometría/detalle al combinar ángulos
 //    (orden esperado por Tripo3D: [frontal, lateral, trasera, otro lateral])
 //
-// Incluye un límite diario global (protección de gasto) usando CountAPI,
-// un contador público gratuito que no requiere cuenta ni configuración.
+// Control de gasto: exige que el usuario haya iniciado sesión (Supabase) y
+// comprueba/descuenta su límite diario de generaciones en la base de datos,
+// en vez de un límite global compartido por todo el sitio.
 export const config = {
   maxDuration: 60,
 };
 
-const DAILY_LIMIT = 15; // máximo de generaciones 3D permitidas al día (ajustable)
+const DAILY_LIMIT = 15; // máximo de generaciones 3D permitidas al día, POR USUARIO
 
-function todayKey() {
-  const d = new Date();
-  return `assetscout-gen-${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+async function checkUsage(req) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return { ok: false, status: 401, error: 'Debes iniciar sesión para generar un modelo 3D.' };
+  }
+
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return { ok: false, status: 500, error: 'Supabase no configurado en el servidor (SUPABASE_URL / SUPABASE_ANON_KEY)' };
+  }
+
+  // Llama a la función increment_usage en Supabase: comprueba e incrementa a la vez,
+  // usando la sesión del propio usuario (auth.uid() dentro de la función SQL).
+  const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_usage`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ p_column: 'generations', p_limit: DAILY_LIMIT }),
+  });
+
+  if (!rpcRes.ok) {
+    const errData = await rpcRes.json().catch(() => ({}));
+    const msg = errData.message || errData.error_description || '';
+    if (msg.includes('DAILY_LIMIT_EXCEEDED')) {
+      return { ok: false, status: 429, error: `Límite diario de generaciones 3D alcanzado (${DAILY_LIMIT}/día). Vuelve a intentarlo mañana.` };
+    }
+    return { ok: false, status: 401, error: 'Sesión no válida. Vuelve a iniciar sesión.' };
+  }
+
+  return { ok: true };
 }
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -36,7 +70,6 @@ export default async function handler(req, res) {
   try {
     const { fileToken, fileType, files } = req.body;
 
-    // Modo multivista: llega un array "files" con 2-4 fotos ya subidas
     const isMultiview = Array.isArray(files) && files.length > 1;
 
     if (!isMultiview && !fileToken) {
@@ -51,20 +84,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'TRIPO_API_KEY no configurada en Vercel' });
     }
 
-    const key = todayKey();
-    let count = 0;
-    try {
-      const counterRes = await fetch(`https://api.countapi.xyz/hit/assetscout-limits/${key}`);
-      const counterData = await counterRes.json();
-      count = counterData.value || 0;
-    } catch (counterErr) {
-      console.error('No se pudo consultar el contador, se permite la petición por seguridad', counterErr);
-    }
-
-    if (count > DAILY_LIMIT) {
-      return res.status(429).json({
-        error: `Límite diario de generaciones 3D alcanzado (${DAILY_LIMIT}/día). Vuelve a intentarlo mañana.`,
-      });
+    // Control de gasto por usuario (requiere sesión iniciada)
+    const usage = await checkUsage(req);
+    if (!usage.ok) {
+      return res.status(usage.status).json({ error: usage.error });
     }
 
     let body;
